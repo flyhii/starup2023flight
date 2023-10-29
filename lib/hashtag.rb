@@ -15,6 +15,7 @@ module FlyHii
 
     def store_data_hashtag
       File.write('spec/fixtures/hashtag_results.yml', @hashtag.to_yaml)
+      @hashtag
     end
   end
 end

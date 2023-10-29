@@ -10,77 +10,83 @@ module FlyHii
   # Library for Github Web API
   class InstagramApi
     API_PROJECT_ROOT = 'https://graph.facebook.com/v18.0'
-    FIELDS = 'id,caption,comments_count,like_count,timestamp'
-
-    module Errors
-      class NotFound < StandardError; end
-      class Unauthorized < StandardError; end
-    end
-
-    HTTP_ERROR = {
-      401 => Errors::Unauthorized,
-      404 => Errors::NotFound
-    }.freeze
-
+    FIELDS = 'id,caption,comments_count,like_count,timestamp, media_url, children, media_type'
     def initialize(token, user_id)
       @ig_token = token
       @ig_user_id = user_id
     end
 
     def hashtag(hashtag_name)
-      hashtag_req_url = ig_api_path_hashtag(hashtag_name)
-      hashtag_id = call_ig_url(hashtag_req_url).parsed_response
-      hashtag = Hashtag.new(hashtag_id) # create Hashtag
+      hashtag_response = Request.new(API_PROJECT_ROOT, @ig_user_id, @ig_token)
+                                .hashtag_url(hashtag_name)
+      hashtag = Hashtag.new(hashtag_response)
       hashtag.store_data_hashtag
-      hashtag.hashtag
     end
 
-    # need hashtag_id from Hashtag
     def media(hashtag_id)
-      media_req_url = ig_api_path_media(hashtag_id)
-      media_data = call_ig_url(media_req_url).parsed_response
-      media_data['data'].map do |data|
+      media_response = Request.new(API_PROJECT_ROOT, @ig_user_id, @ig_token)
+                              .media_url(hashtag_id).parsed_response
+      media_response['data'].each do |data|
         media = Media.new(data)
         media.store_data
       end
     end
 
-    def successful?(result)
-      !HTTP_ERROR.keys.include?(result.code)
+    # request url
+    class Request
+      def initialize(resource_root, ig_user_id, token)
+        @resource_root = resource_root
+        @user_id = ig_user_id
+        @token = token
+      end
+
+      def hashtag_url(hashtag_name)
+        url = "#{@resource_root}/ig_hashtag_search?user_id=#{@user_id}&q=#{hashtag_name}&access_token=#{@token}"
+        InstagramApiResponseHandler.handle(url)
+      end
+
+      def media_url(hashtag_id)
+        url = "#{@resource_root}/#{hashtag_id}/top_media?user_id=#{@user_id}&fields=#{FIELDS}&access_token=#{@token}"
+        InstagramApiResponseHandler.handle(url)
+      end
     end
 
-    private
-
-    def ig_api_path_hashtag(hashtag_name)
-      "#{API_PROJECT_ROOT}/ig_hashtag_search?user_id=#{@ig_user_id}&q=#{hashtag_name}&access_token=#{@ig_token}"
+    # increase one module to deal with HTTP request
+    module HTTPRequestHandler
+      def self.get(url)
+        HTTParty.get(url)
+      end
     end
 
-    def ig_api_path_media(hashtag_id)
-      "#{API_PROJECT_ROOT}/#{hashtag_id}/top_media?user_id=#{@ig_user_id}&fields=#{FIELDS}&access_token=#{@ig_token}"
+    # take the get url response
+    class InstagramApiResponseHandler
+      def self.handle(url)
+        response = HTTPRequestHandler.get(url) # use new HTTPRequestHandler
+        Response.new(response).tap do |inner_response|
+          raise(inner_response.error) unless inner_response.successful?
+        end
+      end
     end
 
-    def call_ig_url(url)
-      result = HTTParty.get(url)
-      successful?(result) ? result : raise(HTTP_ERROR[result.code])
-    end
-  end
+    # Decorates HTTP responses from Instagram with success/error reporting
+    class Response < SimpleDelegator
+      # Represents an unauthorized access error
+      Unauthorized = Class.new(StandardError)
+      # Represents a not found error
+      NotFound = Class.new(StandardError)
 
-  # Decorates HTTP responses from Instagram with success/error reporting
-  class Response < SimpleDelegator
-    Unauthorized = Class.new(StandardError)
-    NotFound = Class.new(StandardError)
+      HTTP_ERROR = {
+        401 => Unauthorized,
+        404 => NotFound
+      }.freeze
 
-    HTTP_ERROR = {
-      401 => Unauthorized,
-      404 => NotFound
-    }.freeze
+      def successful?
+        HTTP_ERROR.keys.none?(code)
+      end
 
-    def successful?
-      HTTP_ERROR.keys.none?(code)
-    end
-
-    def error
-      HTTP_ERROR[code]
+      def error
+        HTTP_ERROR[code]
+      end
     end
   end
 end
